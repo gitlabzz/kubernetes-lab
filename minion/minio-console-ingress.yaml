@@ -1,0 +1,22 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-ingress
+  namespace: minio
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: console.192.168.210.201.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio-console
+                port:
+                  number: 9001
+  tls:
+    - hosts:
+        - console.192.168.210.201.nip.io
+    - secretName: tls-secret

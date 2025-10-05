@@ -1,0 +1,52 @@
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Output
+metadata:
+  name: http
+  namespace: quickstart
+spec:
+  http:
+    endpoint: http://logging-operator-test-receiver:8080
+    content_type: application/json
+    buffer:
+      type: memory
+      tags: time
+      timekey: 1s
+      timekey_wait: 0s
+---
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: quickstart-es-elastic-user
+  namespace: quickstart
+data:
+  elastic: NjlnUWJZd0E0Wko4MFMydzE5M0oxWnJi
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Output
+metadata:
+  name: es-output
+  namespace: quickstart
+spec:
+  elasticsearch:
+    data_stream_enable: true
+    data_stream_name: log-generator-logs
+    host: quickstart-es-http.eck.svc
+    include_timestamp: true
+    index_name: log-generator-logs
+    port: 9200
+    request_timeout: 15s
+    rollover_index: true
+    scheme: https
+    ssl_verify: false
+    ssl_version: TLSv1_2
+    user: elastic
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: quickstart-es-elastic-user
+          key: elastic
+    buffer:
+      timekey: 1m
+      timekey_wait: 30s
+      timekey_use_utc: true

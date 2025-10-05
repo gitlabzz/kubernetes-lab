@@ -1,0 +1,49 @@
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Output
+metadata:
+  name: es-output
+  namespace: ingress-nginx
+spec:
+  elasticsearch:
+    data_stream_enable: true
+    data_stream_name: ingress-container-logs
+    host: quickstart-es-http.eck.svc
+    include_timestamp: true
+    index_name: ingress-container-logs
+    port: 9200
+    request_timeout: 15s
+    rollover_index: true
+    scheme: https
+    ssl_verify: false
+    ssl_version: TLSv1_2
+    user: elastic
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: quickstart-es-elastic-user
+          key: elastic
+    buffer:
+      timekey: 1m
+      timekey_wait: 30s
+      timekey_use_utc: true
+---
+apiVersion: logging.banzaicloud.io/v1beta1
+kind: Flow
+metadata:
+  name: es-flow
+  namespace: ingress-nginx
+spec:
+  filters:
+    - tag_normaliser: { }
+    - parser:
+        remove_key_name_field: true
+        reserve_data: true
+        parse:
+          # Default NGINX log format
+          type: nginx
+  match:
+    - select:
+        labels:
+          app.kubernetes.io/name: ingress-nginx
+  localOutputRefs:
+    - es-output
