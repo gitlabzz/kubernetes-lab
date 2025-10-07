@@ -1,0 +1,130 @@
+# Fixed Adminer deployment that works with no-DNS lab environment
+# Uses direct IP connectivity instead of DNS resolution
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-direct
+  namespace: mysql
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3306
+    targetPort: 3306
+    name: mysql
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: mysql-direct
+  namespace: mysql
+subsets:
+- addresses:
+  - ip: 10.0.1.133  # MySQL pod IP
+  ports:
+  - port: 3306
+    name: mysql
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: adminer-fixed
+  namespace: mysql
+  labels:
+    app: adminer-fixed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: adminer-fixed
+  template:
+    metadata:
+      labels:
+        app: adminer-fixed
+    spec:
+      containers:
+      - name: adminer
+        image: adminer:4.8.1
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: ADMINER_DEFAULT_SERVER
+          value: "mysql-direct"
+        - name: ADMINER_DESIGN
+          value: "pepa-linha"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: adminer-fixed
+  namespace: mysql
+  labels:
+    app: adminer-fixed
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  selector:
+    app: adminer-fixed
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: adminer-fixed-loadbalancer
+  namespace: mysql
+  labels:
+    app: adminer-fixed
+  annotations:
+    metallb.universe.tf/address-pool: first-pool
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 8080
+    name: http
+  selector:
+    app: adminer-fixed
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: adminer-fixed-ingress
+  namespace: mysql
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: adminer-fixed.devsecops.net.au
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/"
+        backend:
+          service:
+            name: adminer-fixed
+            port:
+              number: 80

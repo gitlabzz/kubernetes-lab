@@ -1,0 +1,393 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-client
+  namespace: redis
+  labels:
+    app: redis-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-client
+  template:
+    metadata:
+      labels:
+        app: redis-client
+    spec:
+      containers:
+      - name: redis-client
+        image: redis:7-alpine
+        command: ["/bin/sh"]
+        args: ["-c", "while true; do sleep 30; done;"]
+        env:
+        - name: REDIS_STANDALONE_HOST
+          value: "redis-standalone.redis.svc.cluster.local"
+        - name: REDIS_CLUSTER_HOST
+          value: "redis-cluster-leader.redis.svc.cluster.local"
+        - name: REDIS_PORT
+          value: "6379"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: redis-scripts
+          mountPath: /scripts
+      volumes:
+      - name: redis-scripts
+        configMap:
+          name: redis-client-scripts
+          defaultMode: 0755
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-client-scripts
+  namespace: redis
+data:
+  test-standalone.sh: |
+    #!/bin/sh
+    echo "Testing Redis Standalone connection..."
+    
+    # Basic connectivity test
+    redis-cli -h redis-standalone ping
+    
+    # Test basic operations
+    echo "Testing SET/GET operations:"
+    redis-cli -h redis-standalone set test:key "Hello Redis Standalone!"
+    redis-cli -h redis-standalone get test:key
+    
+    # Test data types
+    echo "Testing Redis data types:"
+    redis-cli -h redis-standalone lpush test:list "item1" "item2" "item3"
+    redis-cli -h redis-standalone lrange test:list 0 -1
+    
+    redis-cli -h redis-standalone hset test:hash field1 "value1" field2 "value2"
+    redis-cli -h redis-standalone hgetall test:hash
+    
+    # Test counters
+    echo "Testing counters:"
+    redis-cli -h redis-standalone incr test:counter
+    redis-cli -h redis-standalone incrby test:counter 10
+    redis-cli -h redis-standalone get test:counter
+    
+    # Show info
+    echo "Redis Standalone Info:"
+    redis-cli -h redis-standalone info server | head -10
+  
+  test-cluster.sh: |
+    #!/bin/sh
+    echo "Testing Redis Cluster connection..."
+    
+    # Wait for cluster to be ready
+    sleep 10
+    
+    # Basic connectivity test
+    redis-cli -h redis-cluster-leader ping || echo "Cluster not ready yet"
+    
+    # Test cluster operations (Note: cluster mode requires -c flag)
+    echo "Testing cluster operations:"
+    redis-cli -h redis-cluster-leader -c set cluster:key "Hello Redis Cluster!"
+    redis-cli -h redis-cluster-leader -c get cluster:key
+    
+    # Show cluster info
+    echo "Redis Cluster Info:"
+    redis-cli -h redis-cluster-leader cluster info || echo "Cluster mode not fully initialized"
+    redis-cli -h redis-cluster-leader cluster nodes || echo "Cluster nodes not available"
+    
+    echo "Redis Cluster Server Info:"
+    redis-cli -h redis-cluster-leader info server | head -10
+  
+  performance-test.sh: |
+    #!/bin/sh
+    echo "Running Redis performance tests..."
+    
+    echo "=== STANDALONE PERFORMANCE ==="
+    echo "Testing SET performance (1000 operations):"
+    time redis-cli -h redis-standalone eval "
+    for i=1,1000 do
+      redis.call('set', 'perf:key:' .. i, 'value' .. i)
+    end
+    return 'OK'
+    " 0
+    
+    echo "Testing GET performance (1000 operations):"
+    time redis-cli -h redis-standalone eval "
+    for i=1,1000 do
+      redis.call('get', 'perf:key:' .. i)
+    end
+    return 'OK'
+    " 0
+    
+    echo "Memory usage:"
+    redis-cli -h redis-standalone info memory | grep used_memory_human
+    
+    echo "=== CLUSTER PERFORMANCE ==="
+    if redis-cli -h redis-cluster-leader ping > /dev/null 2>&1; then
+      echo "Testing cluster SET performance:"
+      time redis-cli -h redis-cluster-leader -c eval "
+      for i=1,100 do
+        redis.call('set', 'cluster:perf:' .. i, 'value' .. i)
+      end
+      return 'OK'
+      " 0
+    else
+      echo "Cluster not ready for performance testing"
+    fi
+  
+  monitor-redis.sh: |
+    #!/bin/sh
+    echo "Monitoring Redis instances..."
+    
+    echo "=== STANDALONE MONITORING ==="
+    echo "Connected clients:"
+    redis-cli -h redis-standalone info clients
+    echo ""
+    
+    echo "Memory usage:"
+    redis-cli -h redis-standalone info memory | grep -E "(used_memory_human|used_memory_peak_human)"
+    echo ""
+    
+    echo "Key statistics:"
+    redis-cli -h redis-standalone info keyspace
+    echo ""
+    
+    echo "Command statistics:"
+    redis-cli -h redis-standalone info commandstats | head -10
+    echo ""
+    
+    echo "=== CLUSTER MONITORING ==="
+    if redis-cli -h redis-cluster-leader ping > /dev/null 2>&1; then
+      echo "Cluster state:"
+      redis-cli -h redis-cluster-leader cluster info | grep -E "(cluster_state|cluster_slots)"
+      
+      echo "Cluster nodes:"
+      redis-cli -h redis-cluster-leader cluster nodes | wc -l
+      echo "nodes detected"
+    else
+      echo "Cluster not ready for monitoring"
+    fi
+  
+  cleanup-test-data.sh: |
+    #!/bin/sh
+    echo "Cleaning up Redis test data..."
+    
+    echo "Cleaning standalone test data:"
+    redis-cli -h redis-standalone del test:key test:list test:hash test:counter
+    redis-cli -h redis-standalone eval "
+    local keys = redis.call('keys', 'perf:key:*')
+    if #keys > 0 then
+      return redis.call('del', unpack(keys))
+    end
+    return 0
+    " 0
+    
+    echo "Cleaning cluster test data:"
+    if redis-cli -h redis-cluster-leader ping > /dev/null 2>&1; then
+      redis-cli -h redis-cluster-leader -c del cluster:key
+      redis-cli -h redis-cluster-leader -c eval "
+      local keys = redis.call('keys', 'cluster:perf:*')
+      if #keys > 0 then
+        return redis.call('del', unpack(keys))
+      end
+      return 0
+      " 0
+    fi
+    
+    echo "Test data cleanup completed!"
+  
+  redis-info.sh: |
+    #!/bin/sh
+    echo "Redis Information Summary..."
+    
+    echo "=== STANDALONE REDIS ==="
+    echo "Version: $(redis-cli -h redis-standalone info server | grep redis_version)"
+    echo "Mode: $(redis-cli -h redis-standalone info server | grep redis_mode)"
+    echo "Uptime: $(redis-cli -h redis-standalone info server | grep uptime_in_seconds)"
+    echo "Memory: $(redis-cli -h redis-standalone info memory | grep used_memory_human)"
+    echo "Total keys: $(redis-cli -h redis-standalone dbsize)"
+    echo ""
+    
+    echo "=== CLUSTER REDIS ==="
+    if redis-cli -h redis-cluster-leader ping > /dev/null 2>&1; then
+      echo "Version: $(redis-cli -h redis-cluster-leader info server | grep redis_version)"
+      echo "Mode: $(redis-cli -h redis-cluster-leader info server | grep redis_mode)"
+      echo "Cluster state: $(redis-cli -h redis-cluster-leader cluster info | grep cluster_state)"
+      echo "Cluster size: $(redis-cli -h redis-cluster-leader cluster info | grep cluster_size)"
+    else
+      echo "Cluster not ready"
+    fi
+  
+  create-sample-ecommerce-data.sh: |
+    #!/bin/sh
+    echo "Creating comprehensive e-commerce sample data..."
+    
+    echo "=== CREATING DATA IN STANDALONE REDIS ==="
+    
+    # Users
+    echo "Adding users..."
+    redis-cli -h redis-standalone hset user:1001 name "Alice Johnson" email "alice@shop.com" join_date "2023-01-15" city "Sydney" age 28
+    redis-cli -h redis-standalone hset user:1002 name "Bob Wilson" email "bob@shop.com" join_date "2023-03-22" city "Melbourne" age 35
+    redis-cli -h redis-standalone hset user:1003 name "Carol Davis" email "carol@shop.com" join_date "2023-05-10" city "Brisbane" age 42
+    redis-cli -h redis-standalone hset user:1004 name "David Lee" email "david@shop.com" join_date "2023-07-08" city "Perth" age 31
+    
+    # Products (JSON format)
+    echo "Adding products..."
+    redis-cli -h redis-standalone set product:101 '{"name":"Wireless Headphones","price":199,"stock":25,"category":"Electronics","brand":"Sony"}'
+    redis-cli -h redis-standalone set product:102 '{"name":"Coffee Maker","price":89,"stock":15,"category":"Home","brand":"Breville"}'
+    redis-cli -h redis-standalone set product:103 '{"name":"Running Shoes","price":129,"stock":40,"category":"Sports","brand":"Nike"}'
+    redis-cli -h redis-standalone set product:104 '{"name":"Laptop Stand","price":45,"stock":30,"category":"Electronics","brand":"Generic"}'
+    redis-cli -h redis-standalone set product:105 '{"name":"Water Bottle","price":25,"stock":100,"category":"Sports","brand":"Contigo"}'
+    
+    # Categories
+    echo "Adding categories..."
+    redis-cli -h redis-standalone sadd category:Electronics "product:101" "product:104"
+    redis-cli -h redis-standalone sadd category:Home "product:102"
+    redis-cli -h redis-standalone sadd category:Sports "product:103" "product:105"
+    
+    # Shopping Carts
+    echo "Adding shopping carts..."
+    redis-cli -h redis-standalone sadd cart:user1001 "product:101" "product:103" "product:105"
+    redis-cli -h redis-standalone sadd cart:user1002 "product:102" "product:104"
+    redis-cli -h redis-standalone sadd cart:user1003 "product:101" "product:102"
+    
+    # Wishlists
+    echo "Adding wishlists..."
+    redis-cli -h redis-standalone lpush wishlist:user1001 "product:102" "product:104"
+    redis-cli -h redis-standalone lpush wishlist:user1002 "product:103" "product:105" "product:101"
+    
+    # Recent Views (FIFO with LTRIM)
+    echo "Adding recent views..."
+    redis-cli -h redis-standalone lpush recent:user1001 "product:101" "product:103" "product:105" "product:102"
+    redis-cli -h redis-standalone ltrim recent:user1001 0 9  # Keep only last 10 views
+    redis-cli -h redis-standalone lpush recent:user1002 "product:102" "product:104" "product:101"
+    redis-cli -h redis-standalone ltrim recent:user1002 0 9
+    
+    # Product Ratings (Sorted Sets)
+    echo "Adding product ratings..."
+    redis-cli -h redis-standalone zadd ratings:product:101 5 "user1001" 4 "user1002" 5 "user1003"
+    redis-cli -h redis-standalone zadd ratings:product:102 5 "user1002" 3 "user1003" 4 "user1004"
+    redis-cli -h redis-standalone zadd ratings:product:103 4 "user1001" 5 "user1004"
+    
+    # Popular Products (by view count)
+    echo "Adding popularity data..."
+    redis-cli -h redis-standalone zadd popular:products 245 "product:101" 189 "product:102" 312 "product:103" 156 "product:104" 89 "product:105"
+    
+    # Search Keywords
+    echo "Adding search data..."
+    redis-cli -h redis-standalone sadd search:electronics "headphones" "laptop" "stand" "wireless"
+    redis-cli -h redis-standalone sadd search:sports "running" "shoes" "water" "bottle" "fitness"
+    redis-cli -h redis-standalone sadd search:home "coffee" "maker" "kitchen" "appliance"
+    
+    # Counters and Stats
+    echo "Adding counters..."
+    redis-cli -h redis-standalone set stats:total_users 1247
+    redis-cli -h redis-standalone set stats:total_products 2891
+    redis-cli -h redis-standalone set stats:total_orders 5634
+    redis-cli -h redis-standalone set stats:revenue 284739.50
+    redis-cli -h redis-standalone incr stats:daily_visitors 1
+    
+    # Session Data (with TTL)
+    echo "Adding session data..."
+    redis-cli -h redis-standalone setex session:user1001 3600 '{"cart_items":3,"last_page":"product:101","logged_in":true}'
+    redis-cli -h redis-standalone setex session:user1002 3600 '{"cart_items":2,"last_page":"checkout","logged_in":true}'
+    
+    # Cache Data (with TTL)
+    echo "Adding cache data..."
+    redis-cli -h redis-standalone setex cache:homepage_data 1800 '{"featured_products":["product:101","product:103"],"banner":"Summer Sale 20% Off"}'
+    redis-cli -h redis-standalone setex cache:user:1001:recommendations 3600 '["product:104","product:105","product:102"]'
+    
+    echo "=== CREATING DATA IN CLUSTER REDIS ==="
+    if redis-cli -h redis-cluster-leader ping > /dev/null 2>&1; then
+      echo "Adding cluster-specific data..."
+      redis-cli -h redis-cluster-leader -c set cluster:config:version "2.1.0"
+      redis-cli -h redis-cluster-leader -c hset cluster:stats total_requests 15847 avg_response_time 23.4 
+      redis-cli -h redis-cluster-leader -c zadd cluster:leaderboard 2500 "shop_a" 1800 "shop_b" 3200 "shop_c"
+      redis-cli -h redis-cluster-leader -c sadd cluster:active_users "user1001" "user1002" "user1003"
+      echo "Cluster data added successfully!"
+    else
+      echo "Cluster not available, skipping cluster data"
+    fi
+    
+    echo ""
+    echo "✅ Sample e-commerce data created successfully!"
+    echo ""
+    echo "📊 Data Summary:"
+    echo "- 4 Users with profiles"
+    echo "- 5 Products with JSON details"  
+    echo "- Shopping carts and wishlists"
+    echo "- Product ratings and popularity"
+    echo "- Search keywords and categories"
+    echo "- Session data (1 hour TTL)"
+    echo "- Cache data (30 min TTL)"
+    echo "- Site statistics and counters"
+    echo ""
+    echo "🔍 Try exploring this data in RedisInsight Browser!"
+  
+  explore-sample-data.sh: |
+    #!/bin/sh
+    echo "Exploring sample e-commerce data..."
+    
+    echo "=== USERS ==="
+    echo "All users:"
+    redis-cli -h redis-standalone keys "user:*" | while read key; do
+      echo "📄 $key:"
+      redis-cli -h redis-standalone hgetall "$key" | sed 's/^/  /'
+      echo
+    done
+    
+    echo "=== PRODUCTS ==="
+    echo "All products:"
+    redis-cli -h redis-standalone keys "product:*" | head -3 | while read key; do
+      echo "📦 $key:"
+      redis-cli -h redis-standalone get "$key" | sed 's/^/  /'
+      echo
+    done
+    
+    echo "=== SHOPPING CARTS ==="
+    redis-cli -h redis-standalone keys "cart:*" | while read key; do
+      echo "🛒 $key contains:"
+      redis-cli -h redis-standalone smembers "$key" | sed 's/^/  - /'
+      echo
+    done
+    
+    echo "=== TOP PRODUCTS BY POPULARITY ==="
+    echo "🏆 Most popular products:"
+    redis-cli -h redis-standalone zrevrange popular:products 0 2 withscores | paste - - | while read product score; do
+      echo "  $product: $score views"
+    done
+    echo
+    
+    echo "=== PRODUCT RATINGS ==="
+    echo "⭐ Product ratings:"
+    redis-cli -h redis-standalone keys "ratings:*" | head -2 | while read key; do
+      product=$(echo $key | cut -d: -f2-)
+      avg_score=$(redis-cli -h redis-standalone eval "
+        local scores = redis.call('zrange', KEYS[1], 0, -1, 'withscores')
+        local sum, count = 0, 0
+        for i=2,#scores,2 do
+          sum = sum + scores[i]
+          count = count + 1
+        end
+        return count > 0 and math.floor((sum/count)*10)/10 or 0
+      " 1 "$key")
+      echo "  $product: $avg_score/5 stars"
+    done
+    echo
+    
+    echo "=== SITE STATISTICS ==="
+    echo "📊 Current stats:"
+    echo "  Total users: $(redis-cli -h redis-standalone get stats:total_users)"
+    echo "  Total products: $(redis-cli -h redis-standalone get stats:total_products)"
+    echo "  Total orders: $(redis-cli -h redis-standalone get stats:total_orders)"
+    echo "  Revenue: $$(redis-cli -h redis-standalone get stats:revenue)"
+    echo "  Active sessions: $(redis-cli -h redis-standalone keys 'session:*' | wc -l)"
+    echo
+    
+    echo "=== MEMORY USAGE ==="
+    echo "💾 Database size: $(redis-cli -h redis-standalone dbsize) keys"
+    echo "💾 Memory usage: $(redis-cli -h redis-standalone info memory | grep used_memory_human | cut -d: -f2)"

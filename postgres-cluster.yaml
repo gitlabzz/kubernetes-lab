@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+  namespace: postgres
+type: kubernetes.io/basic-auth
+data:
+  username: bGFidXNlcg==  # labuser (base64)
+  password: U2VjdXJlTGFiUGFzcyEyMyE=  # SecureLabPass!23! (base64)
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-cluster
+  namespace: postgres
+spec:
+  instances: 2
+  
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "256MB"
+      effective_cache_size: "1GB"
+      work_mem: "4MB"
+      maintenance_work_mem: "64MB"
+      wal_level: "replica"
+      max_wal_senders: "10"
+      max_replication_slots: "10"
+      log_statement: "none"
+      log_min_duration_statement: "1000"
+  
+  bootstrap:
+    initdb:
+      database: labdb
+      owner: labuser
+      secret:
+        name: postgres-credentials
+  
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+  
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  
+  monitoring:
+    enablePodMonitor: true

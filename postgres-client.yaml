@@ -1,0 +1,213 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-client
+  namespace: postgres
+  labels:
+    app: postgres-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-client
+  template:
+    metadata:
+      labels:
+        app: postgres-client
+    spec:
+      containers:
+      - name: postgres-client
+        image: postgres:17
+        command: ["/bin/bash"]
+        args: ["-c", "while true; do sleep 30; done;"]
+        env:
+        - name: PGHOST
+          value: "postgres-cluster-rw.postgres.svc.cluster.local"
+        - name: PGPORT
+          value: "5432"
+        - name: PGDATABASE
+          value: "labdb"
+        - name: PGUSER
+          value: "testuser"
+        - name: PGPASSWORD
+          value: "testpass123"
+        - name: POSTGRES_DB
+          value: "labdb"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: client-scripts
+          mountPath: /scripts
+      volumes:
+      - name: client-scripts
+        configMap:
+          name: postgres-client-scripts
+          defaultMode: 0755
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-client-scripts
+  namespace: postgres
+data:
+  test-connection.sh: |
+    #!/bin/bash
+    echo "Testing PostgreSQL connection..."
+    psql -c "SELECT 'Connection successful!' as status, version();"
+  
+  create-test-data.sh: |
+    #!/bin/bash
+    echo "Creating test database and tables..."
+    
+    # First grant schema permissions to testuser
+    psql -U postgres -d labdb -c "GRANT ALL ON SCHEMA public TO testuser;"
+    
+    # Connect to labdb and create test tables
+    psql -d labdb -c "
+    -- Create users table
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_login TIMESTAMP
+    );
+    
+    -- Create products table
+    CREATE TABLE IF NOT EXISTS products (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        price DECIMAL(10,2) NOT NULL,
+        stock_quantity INTEGER DEFAULT 0,
+        category VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- Create orders table
+    CREATE TABLE IF NOT EXISTS orders (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        product_id INTEGER REFERENCES products(id),
+        quantity INTEGER NOT NULL,
+        total_amount DECIMAL(10,2) NOT NULL,
+        order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status VARCHAR(20) DEFAULT 'pending'
+    );
+    "
+    echo "Test tables created successfully!"
+  
+  insert-test-data.sh: |
+    #!/bin/bash
+    echo "Inserting test data..."
+    
+    psql -d labdb -c "
+    -- Insert test users
+    INSERT INTO users (username, email) VALUES 
+        ('john_doe', 'john@example.com'),
+        ('jane_smith', 'jane@example.com'),
+        ('bob_wilson', 'bob@example.com')
+    ON CONFLICT (username) DO NOTHING;
+    
+    -- Insert test products
+    INSERT INTO products (name, description, price, stock_quantity, category) VALUES 
+        ('Laptop Pro', 'High-performance laptop for professionals', 1299.99, 50, 'Electronics'),
+        ('Wireless Mouse', 'Ergonomic wireless mouse with long battery life', 29.99, 200, 'Electronics'),
+        ('Office Chair', 'Comfortable ergonomic office chair', 199.99, 25, 'Furniture'),
+        ('Coffee Maker', 'Automatic coffee maker with timer', 89.99, 75, 'Appliances'),
+        ('Desk Lamp', 'LED desk lamp with adjustable brightness', 39.99, 100, 'Furniture')
+    ON CONFLICT DO NOTHING;
+    
+    -- Insert test orders
+    INSERT INTO orders (user_id, product_id, quantity, total_amount, status) VALUES 
+        (1, 1, 1, 1299.99, 'completed'),
+        (1, 2, 2, 59.98, 'completed'),
+        (2, 3, 1, 199.99, 'pending'),
+        (3, 4, 1, 89.99, 'shipped'),
+        (2, 5, 2, 79.98, 'completed')
+    ON CONFLICT DO NOTHING;
+    "
+    echo "Test data inserted successfully!"
+  
+  query-test-data.sh: |
+    #!/bin/bash
+    echo "Querying test data..."
+    
+    echo "=== USERS TABLE ==="
+    psql -d labdb -c "SELECT * FROM users;"
+    
+    echo "=== PRODUCTS TABLE ==="
+    psql -d labdb -c "SELECT id, name, price, stock_quantity, category FROM products;"
+    
+    echo "=== ORDERS WITH USER INFO ==="
+    psql -d labdb -c "
+    SELECT 
+        o.id as order_id,
+        u.username,
+        p.name as product_name,
+        o.quantity,
+        o.total_amount,
+        o.status,
+        o.order_date
+    FROM orders o
+    JOIN users u ON o.user_id = u.id
+    JOIN products p ON o.product_id = p.id
+    ORDER BY o.order_date DESC;
+    "
+    
+    echo "=== DATABASE STATISTICS ==="
+    psql -d labdb -c "
+    SELECT 
+        'Users' as table_name, COUNT(*) as record_count FROM users
+    UNION ALL
+    SELECT 
+        'Products' as table_name, COUNT(*) as record_count FROM products
+    UNION ALL
+    SELECT 
+        'Orders' as table_name, COUNT(*) as record_count FROM orders;
+    "
+  
+  performance-test.sh: |
+    #!/bin/bash
+    echo "Running performance tests..."
+    
+    echo "=== CONNECTION PERFORMANCE ==="
+    time psql -d labdb -c "SELECT 1;"
+    
+    echo "=== QUERY PERFORMANCE ==="
+    psql -d labdb -c "
+    EXPLAIN ANALYZE 
+    SELECT 
+        u.username,
+        COUNT(o.id) as total_orders,
+        SUM(o.total_amount) as total_spent
+    FROM users u
+    LEFT JOIN orders o ON u.id = o.user_id
+    GROUP BY u.id, u.username
+    ORDER BY total_spent DESC;
+    "
+    
+    echo "=== DATABASE SIZE ==="
+    psql -d labdb -c "
+    SELECT 
+        pg_size_pretty(pg_database_size('labdb')) as database_size,
+        pg_size_pretty(pg_total_relation_size('users')) as users_table_size,
+        pg_size_pretty(pg_total_relation_size('products')) as products_table_size,
+        pg_size_pretty(pg_total_relation_size('orders')) as orders_table_size;
+    "
+  
+  cleanup-test-data.sh: |
+    #!/bin/bash
+    echo "Cleaning up test data..."
+    
+    psql -d labdb -c "
+    DROP TABLE IF EXISTS orders CASCADE;
+    DROP TABLE IF EXISTS products CASCADE;
+    DROP TABLE IF EXISTS users CASCADE;
+    "
+    echo "Test data cleaned up successfully!"
