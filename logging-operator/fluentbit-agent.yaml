@@ -1,5 +1,0 @@
-apiVersion: logging.banzaicloud.io/v1beta1
-kind: FluentbitAgent
-metadata:
-  name: quickstart
-spec: { }
