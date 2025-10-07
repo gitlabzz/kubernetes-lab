@@ -10,7 +10,7 @@ set -e  # Exit on any error
 REDIS_NAMESPACE="redis"
 OPERATOR_NAMESPACE="ot-operators"
 KUBECONFIG_PATH="/private/tmp/kubernetes-lab/admin.conf"
-SCRIPT_DIR="/private/tmp/kubernetes-lab"
+SCRIPT_DIR="/private/tmp/kubernetes-lab/redis"
 
 # Colors for output
 RED='\033[0;31m'
