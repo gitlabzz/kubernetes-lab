@@ -3,10 +3,12 @@ kind: Secret
 metadata:
   name: postgres-credentials
   namespace: postgres
+  annotations:
+    kubernetes.io/description: "Auto-generated PostgreSQL cluster credentials"
 type: kubernetes.io/basic-auth
-data:
-  username: bGFidXNlcg==  # labuser (base64)
-  password: U2VjdXJlTGFiUGFzcyEyMyE=  # SecureLabPass!23! (base64)
+stringData:
+  username: "labuser"
+  password: "SecureLabPass!23!"
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster

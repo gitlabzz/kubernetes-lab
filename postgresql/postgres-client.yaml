@@ -20,6 +20,13 @@ spec:
         image: postgres:17
         command: ["/bin/bash"]
         args: ["-c", "while true; do sleep 30; done;"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 999
+          runAsGroup: 999
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: PGHOST
           value: "postgres-cluster-rw.postgres.svc.cluster.local"
@@ -28,9 +35,15 @@ spec:
         - name: PGDATABASE
           value: "labdb"
         - name: PGUSER
-          value: "testuser"
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
         - name: PGPASSWORD
-          value: "testpass123"
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
         - name: POSTGRES_DB
           value: "labdb"
         resources:
@@ -64,8 +77,8 @@ data:
     #!/bin/bash
     echo "Creating test database and tables..."
     
-    # First grant schema permissions to testuser
-    psql -U postgres -d labdb -c "GRANT ALL ON SCHEMA public TO testuser;"
+    # Ensure schema permissions for current user
+    psql -d labdb -c "GRANT ALL ON SCHEMA public TO CURRENT_USER;"
     
     # Connect to labdb and create test tables
     psql -d labdb -c "

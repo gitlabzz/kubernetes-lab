@@ -15,17 +15,28 @@ spec:
       labels:
         app: adminer-postgres
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: adminer
         image: adminer:4.8.1
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop: ["ALL"]
         ports:
         - containerPort: 8080
           name: http
         env:
         - name: ADMINER_DEFAULT_SERVER
           value: "postgres-cluster-rw"
-        - name: ADMINER_DESIGN
-          value: "pepa-linha"
         resources:
           requests:
             memory: "128Mi"
@@ -73,9 +84,13 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: selfsigned-issuer
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - postgres.devsecops.net.au
+    secretName: adminer-postgres-tls
   rules:
   - host: postgres.devsecops.net.au
     http:

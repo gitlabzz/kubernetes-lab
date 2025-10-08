@@ -1,4 +1,16 @@
 apiVersion: v1
+kind: Secret
+metadata:
+  name: pgadmin-credentials
+  namespace: postgres
+  annotations:
+    kubernetes.io/description: "pgAdmin web interface credentials"
+type: Opaque
+stringData:
+  email: "admin@example.com"
+  password: "SecurePgAdminPass!42!"
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: pgadmin-pvc
@@ -28,43 +40,71 @@ spec:
       labels:
         app: pgadmin
     spec:
+      securityContext:
+        fsGroup: 5050
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+      - name: pgadmin-init
+        image: dpage/pgadmin4:8.11
+        command: ["/bin/sh","-lc"]
+        args:
+          - |
+            set -e
+            chown -R 5050:5050 /var/lib/pgadmin
+        securityContext:
+          runAsUser: 0
+          allowPrivilegeEscalation: true
+        volumeMounts:
+        - name: pgadmin-storage
+          mountPath: /var/lib/pgadmin
       containers:
       - name: pgadmin
         image: dpage/pgadmin4:8.11
+        securityContext:
+          runAsUser: 5050
+          runAsGroup: 5050
         ports:
-        - containerPort: 80
+        - containerPort: 8080
           name: http
         env:
         - name: PGADMIN_DEFAULT_EMAIL
-          value: "admin@example.com"
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-credentials
+              key: email
         - name: PGADMIN_DEFAULT_PASSWORD
-          value: "admin123"
-        - name: PGADMIN_CONFIG_SERVER_MODE
-          value: "False"
-        - name: PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED
-          value: "False"
+          valueFrom:
+            secretKeyRef:
+              name: pgadmin-credentials
+              key: password
+        - name: PGADMIN_DISABLE_POSTFIX
+          value: "true"
+        - name: PGADMIN_LISTEN_PORT
+          value: "8080"
         resources:
           requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
             memory: "256Mi"
             cpu: "200m"
-          limits:
-            memory: "512Mi"
-            cpu: "400m"
         volumeMounts:
         - name: pgadmin-storage
           mountPath: /var/lib/pgadmin
         livenessProbe:
           httpGet:
             path: /misc/ping
-            port: 80
-          initialDelaySeconds: 30
-          periodSeconds: 10
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
         readinessProbe:
           httpGet:
             path: /misc/ping
-            port: 80
-          initialDelaySeconds: 10
-          periodSeconds: 5
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
       volumes:
       - name: pgadmin-storage
         persistentVolumeClaim:
@@ -82,7 +122,7 @@ spec:
     app: pgadmin
   ports:
     - port: 80
-      targetPort: 80
+      targetPort: 8080
       name: http
   type: ClusterIP
 ---
@@ -99,6 +139,10 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - pgadmin.devsecops.net.au
+    secretName: pgadmin-tls
   rules:
   - host: pgadmin.devsecops.net.au
     http:
