@@ -24,7 +24,7 @@ REDIS_CLUSTER_CHART_VERSION="${REDIS_CLUSTER_CHART_VERSION:-0.17.1}"
 # Pin container images for Redis data-plane (override via env if needed)
 # These apply to the Redis CRs managed by the operator.
 REDIS_IMAGE_REPOSITORY="${REDIS_IMAGE_REPOSITORY:-quay.io/opstree/redis}"
-REDIS_IMAGE_TAG="${REDIS_IMAGE_TAG:-7.0.15}"
+REDIS_IMAGE_TAG="${REDIS_IMAGE_TAG:-v7.0.15}"
 
 # Resolve Helm binary: prefer system helm, fallback to repo-local helm
 HELM_BIN="${HELM_BIN:-$(command -v helm || true)}"
