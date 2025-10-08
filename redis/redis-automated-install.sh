@@ -4,13 +4,32 @@
 # This script automates the entire Redis deployment process from start to finish
 # Including: Operator, Standalone, Cluster, Client Pod, Web UI, and Validation
 
-set -e  # Exit on any error
+set -euo pipefail  # Safer bash options
 
-# Configuration Variables
-REDIS_NAMESPACE="redis"
-OPERATOR_NAMESPACE="ot-operators"
-KUBECONFIG_PATH="/private/tmp/kubernetes-lab/admin.conf"
-SCRIPT_DIR="/private/tmp/kubernetes-lab/redis"
+# Resolve paths and environment
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Configuration Variables (overridable via env)
+REDIS_NAMESPACE="${REDIS_NAMESPACE:-redis}"
+OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-ot-operators}"
+KUBECONFIG_PATH_DEFAULT="/private/tmp/kubernetes-lab/admin.conf"
+export KUBECONFIG="${KUBECONFIG:-$KUBECONFIG_PATH_DEFAULT}"
+
+# Resolve Helm binary: prefer system helm, fallback to repo-local helm
+HELM_BIN="${HELM_BIN:-$(command -v helm || true)}"
+if [ -z "$HELM_BIN" ]; then
+  if [ -x "$REPO_ROOT/helm" ]; then
+    HELM_BIN="$REPO_ROOT/helm"
+  else
+    echo "Helm not found. Install helm or place binary at $REPO_ROOT/helm" >&2
+    exit 1
+  fi
+fi
+
+# Track whether namespaces existed before to avoid destructive cleanup
+REDIS_NS_EXISTED=false
+OPERATOR_NS_EXISTED=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -50,28 +69,33 @@ log_step() {
 check_prerequisites() {
     log_header "CHECKING PREREQUISITES"
     
-    log_step "1/4" "Checking kubectl"
+    log_step "1/6" "Checking kubectl"
     if ! command -v kubectl &> /dev/null; then
         log_error "kubectl not found"
         exit 1
     fi
     log_success "kubectl found"
     
-    log_step "2/4" "Checking kubeconfig"
-    export KUBECONFIG="$KUBECONFIG_PATH"
+    log_step "2/6" "Checking kubeconfig"
     if ! kubectl cluster-info &> /dev/null; then
         log_error "Cannot connect to Kubernetes cluster"
         exit 1
     fi
     log_success "Kubernetes cluster accessible"
     
-    log_step "3/4" "Checking helm binary"
-    if [ ! -f "$SCRIPT_DIR/helm" ]; then
-        log_error "Helm binary not found at $SCRIPT_DIR/helm"
-        exit 1
+    # Record namespace existence to avoid destructive cleanup later
+    if kubectl get namespace "$REDIS_NAMESPACE" &>/dev/null; then
+        REDIS_NS_EXISTED=true
     fi
-    chmod +x "$SCRIPT_DIR/helm"
-    log_success "Helm binary found and executable"
+    if kubectl get namespace "$OPERATOR_NAMESPACE" &>/dev/null; then
+        OPERATOR_NS_EXISTED=true
+    fi
+    
+    log_step "3/6" "Checking helm binary"
+    if [ "$HELM_BIN" = "$REPO_ROOT/helm" ]; then
+        chmod +x "$HELM_BIN" || true
+    fi
+    log_success "Helm binary: $HELM_BIN"
     
     log_step "4/6" "Checking required YAML files"
     if [ ! -f "$SCRIPT_DIR/redis-client.yaml" ]; then
@@ -105,14 +129,15 @@ install_redis_operator() {
     
     log_step "1/3" "Adding OT-Container-Kit Helm repository"
     # Using exact commands we tested successfully
-    $SCRIPT_DIR/helm repo add ot-helm https://ot-container-kit.github.io/helm-charts/
-    $SCRIPT_DIR/helm repo update
+    $HELM_BIN repo add ot-helm https://ot-container-kit.github.io/helm-charts/
+    $HELM_BIN repo update
     log_success "Helm repository added and updated"
     
     log_step "2/3" "Installing Redis Operator" 
     # Using the exact command we tested successfully
-    $SCRIPT_DIR/helm upgrade redis-operator ot-helm/redis-operator \
-        --install --create-namespace --namespace "$OPERATOR_NAMESPACE"
+    $HELM_BIN upgrade redis-operator ot-helm/redis-operator \
+        --install --create-namespace --namespace "$OPERATOR_NAMESPACE" \
+        --wait --timeout 10m --atomic
     log_success "Redis Operator installed successfully"
     
     log_step "3/3" "Verifying operator deployment"
@@ -130,21 +155,23 @@ deploy_redis_instances() {
     
     log_step "2/4" "Deploying Redis Standalone instance"
     # Using the exact command we tested successfully
-    $SCRIPT_DIR/helm upgrade redis-standalone ot-helm/redis \
+    $HELM_BIN upgrade redis-standalone ot-helm/redis \
         --install --namespace "$REDIS_NAMESPACE" \
         --set storageSpec.volumeClaimTemplate.spec.storageClassName=longhorn \
         --set storageSpec.volumeClaimTemplate.spec.resources.requests.storage=5Gi \
         --set redisExporter.enabled=true \
-        --set serviceMonitor.enabled=true
+        --set serviceMonitor.enabled=true \
+        --wait --timeout 10m --atomic
     log_success "Redis Standalone deployed"
     
     log_step "3/4" "Deploying Redis Cluster" 
     # Using the exact command we tested successfully
-    $SCRIPT_DIR/helm upgrade redis-cluster ot-helm/redis-cluster \
+    $HELM_BIN upgrade redis-cluster ot-helm/redis-cluster \
         --install --namespace "$REDIS_NAMESPACE" \
         --set redisCluster.clusterSize=3 \
         --set redisCluster.storageSpec.volumeClaimTemplate.spec.storageClassName=longhorn \
-        --set redisCluster.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=3Gi
+        --set redisCluster.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=3Gi \
+        --wait --timeout 10m --atomic
     log_success "Redis Cluster deployed"
     
     log_step "4/4" "Waiting for Redis instances to be ready"
@@ -306,8 +333,9 @@ run_performance_tests() {
     duration=$(( (end_time - start_time) / 1000000 ))
     echo "   • GET Performance: 100 operations in ${duration}ms"
     
-    # Cleanup performance test data
-    kubectl exec deployment/redis-client -n "$REDIS_NAMESPACE" -- redis-cli -h redis-standalone eval "local keys = redis.call('keys', 'perf:test:*') if #keys > 0 then return redis.call('del', unpack(keys)) end return 0" 0 > /dev/null 2>&1
+    # Cleanup performance test data (use SCAN to avoid blocking)
+    kubectl exec deployment/redis-client -n "$REDIS_NAMESPACE" -- sh -lc \
+      'redis-cli -h redis-standalone --scan --pattern "perf:test:*" | xargs -r -L 100 redis-cli -h redis-standalone del > /dev/null 2>&1'
     
     log_success "Performance validation completed"
 }
@@ -434,9 +462,18 @@ health_check() {
 
 # Cleanup function
 cleanup_on_error() {
-    log_error "Installation failed. Cleaning up..."
-    kubectl delete namespace "$REDIS_NAMESPACE" --ignore-not-found=true
-    kubectl delete namespace "$OPERATOR_NAMESPACE" --ignore-not-found=true
+    log_error "Installation failed. Conditional cleanup in progress..."
+    # Only remove namespaces we created in this run
+    if [ "$REDIS_NS_EXISTED" = false ]; then
+        kubectl delete namespace "$REDIS_NAMESPACE" --ignore-not-found=true || true
+    else
+        log_warning "Preserving existing namespace: $REDIS_NAMESPACE"
+    fi
+    if [ "$OPERATOR_NS_EXISTED" = false ]; then
+        kubectl delete namespace "$OPERATOR_NAMESPACE" --ignore-not-found=true || true
+    else
+        log_warning "Preserving existing namespace: $OPERATOR_NAMESPACE"
+    fi
     exit 1
 }
 

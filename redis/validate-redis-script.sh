@@ -3,7 +3,10 @@
 # Validation script to check if Redis automation script contains tested commands
 # This ensures all commands in the automation script have been verified
 
-SCRIPT_FILE="/private/tmp/kubernetes-lab/redis-automated-install.sh"
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_FILE="$SCRIPT_DIR/redis-automated-install.sh"
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'

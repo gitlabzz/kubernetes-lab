@@ -4,11 +4,19 @@
 # This script tests the complete Redis lifecycle: Uninstall → Install → Validate
 # Perfect for testing the automation scripts end-to-end
 
-set -e  # Exit on any error
+set -euo pipefail  # Safer bash options
 
-# Configuration
-SCRIPT_DIR="/private/tmp/kubernetes-lab"
-KUBECONFIG_PATH="/private/tmp/kubernetes-lab/admin.conf"
+# Configuration and paths
+SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
+KUBECONFIG_PATH_DEFAULT="/private/tmp/kubernetes-lab/admin.conf"
+export KUBECONFIG="${KUBECONFIG:-$KUBECONFIG_PATH_DEFAULT}"
+
+# Resolve Helm binary
+HELM_BIN="${HELM_BIN:-$(command -v helm || true)}"
+if [ -z "$HELM_BIN" ] && [ -x "$REPO_ROOT/helm" ]; then
+  HELM_BIN="$REPO_ROOT/helm"
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -48,15 +56,13 @@ log_step() {
 check_prerequisites() {
     log_header "CHECKING TEST PREREQUISITES"
     
-    export KUBECONFIG="$KUBECONFIG_PATH"
-    
     log_step "1/4" "Checking required scripts"
-    if [ ! -f "$SCRIPT_DIR/redis-uninstall.sh" ] || [ ! -x "$SCRIPT_DIR/redis-uninstall.sh" ]; then
+    if [ ! -f "$SCRIPTS_DIR/redis-uninstall.sh" ] || [ ! -x "$SCRIPTS_DIR/redis-uninstall.sh" ]; then
         log_error "redis-uninstall.sh not found or not executable"
         exit 1
     fi
     
-    if [ ! -f "$SCRIPT_DIR/redis-automated-install.sh" ] || [ ! -x "$SCRIPT_DIR/redis-automated-install.sh" ]; then
+    if [ ! -f "$SCRIPTS_DIR/redis-automated-install.sh" ] || [ ! -x "$SCRIPTS_DIR/redis-automated-install.sh" ]; then
         log_error "redis-automated-install.sh not found or not executable"
         exit 1
     fi
@@ -70,11 +76,11 @@ check_prerequisites() {
     log_success "Kubernetes cluster accessible"
     
     log_step "3/4" "Checking Helm binary"
-    if [ ! -f "$SCRIPT_DIR/helm" ] || [ ! -x "$SCRIPT_DIR/helm" ]; then
-        log_error "Helm binary not found or not executable"
+    if [ -z "$HELM_BIN" ]; then
+        log_error "Helm binary not found (install helm or place binary at $REPO_ROOT/helm)"
         exit 1
     fi
-    log_success "Helm binary available"
+    log_success "Helm binary available: $HELM_BIN"
     
     log_step "4/4" "Checking Longhorn storage"
     if ! kubectl get storageclass longhorn &> /dev/null; then
@@ -129,11 +135,11 @@ run_uninstall_phase() {
     log_header "PHASE 1: UNINSTALLATION TEST"
     
     log_step "1/2" "Running Redis uninstall script"
-    log_info "🚀 Executing: $SCRIPT_DIR/redis-uninstall.sh"
+    log_info "🚀 Executing: $SCRIPTS_DIR/redis-uninstall.sh"
     echo ""
     
     # Run uninstall script with automatic confirmation
-    echo "y" | "$SCRIPT_DIR/redis-uninstall.sh" || {
+    echo "y" | "$SCRIPTS_DIR/redis-uninstall.sh" || {
         log_error "Uninstall script failed"
         return 1
     }
@@ -160,11 +166,11 @@ run_install_phase() {
     log_header "PHASE 2: INSTALLATION TEST"
     
     log_step "1/2" "Running Redis install script"
-    log_info "🚀 Executing: $SCRIPT_DIR/redis-automated-install.sh"
+    log_info "🚀 Executing: $SCRIPTS_DIR/redis-automated-install.sh"
     echo ""
     
     # Run install script
-    "$SCRIPT_DIR/redis-automated-install.sh" || {
+    "$SCRIPTS_DIR/redis-automated-install.sh" || {
         log_error "Install script failed"
         return 1
     }

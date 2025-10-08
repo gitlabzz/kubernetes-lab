@@ -19,7 +19,7 @@ The `redis-automated-install.sh` script provides **complete end-to-end automatio
 
 ### **Run the Complete Installation:**
 ```bash
-cd /private/tmp/kubernetes-lab
+cd /private/tmp/kubernetes-lab/redis
 ./redis-automated-install.sh
 ```
 
@@ -193,10 +193,10 @@ The script is **idempotent** - safe to run multiple times:
 
 ### **Clean Re-install:**
 ```bash
-# Remove everything first
-kubectl delete namespace redis ot-operators
+# Remove everything first (interactive)
+./redis-uninstall.sh
 
-# Then run script
+# Then run script again
 ./redis-automated-install.sh
 ```
 

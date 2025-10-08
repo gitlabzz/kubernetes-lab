@@ -20,6 +20,11 @@ spec:
         image: redis:7-alpine
         command: ["/bin/sh"]
         args: ["-c", "while true; do sleep 30; done;"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
         env:
         - name: REDIS_STANDALONE_HOST
           value: "redis-standalone.redis.svc.cluster.local"
@@ -178,24 +183,13 @@ data:
     
     echo "Cleaning standalone test data:"
     redis-cli -h redis-standalone del test:key test:list test:hash test:counter
-    redis-cli -h redis-standalone eval "
-    local keys = redis.call('keys', 'perf:key:*')
-    if #keys > 0 then
-      return redis.call('del', unpack(keys))
-    end
-    return 0
-    " 0
+    # Use SCAN to avoid blocking on large keyspaces
+    redis-cli -h redis-standalone --scan --pattern 'perf:key:*' | xargs -r -L 100 redis-cli -h redis-standalone del >/dev/null 2>&1
     
     echo "Cleaning cluster test data:"
     if redis-cli -h redis-cluster-leader ping > /dev/null 2>&1; then
       redis-cli -h redis-cluster-leader -c del cluster:key
-      redis-cli -h redis-cluster-leader -c eval "
-      local keys = redis.call('keys', 'cluster:perf:*')
-      if #keys > 0 then
-        return redis.call('del', unpack(keys))
-      end
-      return 0
-      " 0
+      redis-cli -h redis-cluster-leader -c --scan --pattern 'cluster:perf:*' | xargs -r -L 100 redis-cli -h redis-cluster-leader -c del >/dev/null 2>&1
     fi
     
     echo "Test data cleanup completed!"

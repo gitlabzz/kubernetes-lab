@@ -4,13 +4,28 @@
 # This script removes all Redis-related components from the Kubernetes cluster
 # Including: Operator, Instances, Client Pod, Web UI, Storage, and Configurations
 
-set -e  # Exit on any error
+set -euo pipefail  # Safer bash options
 
-# Configuration Variables
-REDIS_NAMESPACE="redis"
-OPERATOR_NAMESPACE="ot-operators"
-KUBECONFIG_PATH="/private/tmp/kubernetes-lab/admin.conf"
-SCRIPT_DIR="/private/tmp/kubernetes-lab"
+# Resolve paths and environment
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Configuration Variables (overridable via env)
+REDIS_NAMESPACE="${REDIS_NAMESPACE:-redis}"
+OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-ot-operators}"
+KUBECONFIG_PATH_DEFAULT="/private/tmp/kubernetes-lab/admin.conf"
+export KUBECONFIG="${KUBECONFIG:-$KUBECONFIG_PATH_DEFAULT}"
+
+# Resolve Helm binary: prefer system helm, fallback to repo-local helm
+HELM_BIN="${HELM_BIN:-$(command -v helm || true)}"
+if [ -z "$HELM_BIN" ]; then
+  if [ -x "$REPO_ROOT/helm" ]; then
+    HELM_BIN="$REPO_ROOT/helm"
+  else
+    echo "Helm not found. Install helm or place binary at $REPO_ROOT/helm" >&2
+    exit 1
+  fi
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -58,7 +73,6 @@ check_prerequisites() {
     log_success "kubectl found"
     
     log_step "2/2" "Checking kubeconfig"
-    export KUBECONFIG="$KUBECONFIG_PATH"
     if ! kubectl cluster-info &> /dev/null; then
         log_error "Cannot connect to Kubernetes cluster"
         exit 1
@@ -139,11 +153,11 @@ show_current_resources() {
     # Check Helm releases
     echo ""
     log_info "🔍 Checking Helm releases..."
-    if [ -f "$SCRIPT_DIR/helm" ]; then
-        redis_releases=$($SCRIPT_DIR/helm list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | wc -l || echo "0")
+    if [ -n "$HELM_BIN" ]; then
+        redis_releases=$($HELM_BIN list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | wc -l || echo "0")
         if [ "$redis_releases" -gt "0" ]; then
             echo "   • Redis-related Helm releases: $redis_releases"
-            $SCRIPT_DIR/helm list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | awk '{print "      • " $1 " in " $2}' || true
+            $HELM_BIN list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | awk '{print "      • " $1 " in " $2}' || true
         else
             echo "   • No Redis-related Helm releases found"
         fi
@@ -194,13 +208,13 @@ confirm_deletion() {
 remove_helm_releases() {
     log_header "REMOVING HELM RELEASES"
     
-    if [ ! -f "$SCRIPT_DIR/helm" ]; then
+    if [ -z "$HELM_BIN" ]; then
         log_warning "Helm binary not found - skipping Helm release removal"
         return 0
     fi
     
     log_step "1/4" "Checking for Redis Helm releases"
-    redis_releases=$($SCRIPT_DIR/helm list --all-namespaces --no-headers 2>/dev/null | grep -E "redis" || echo "")
+    redis_releases=$($HELM_BIN list --all-namespaces --no-headers 2>/dev/null | grep -E "redis" || echo "")
     
     if [ -n "$redis_releases" ]; then
         echo "$redis_releases" | while read -r release_line; do
@@ -208,7 +222,7 @@ remove_helm_releases() {
             release_namespace=$(echo "$release_line" | awk '{print $2}')
             
             log_step "•" "Removing Helm release: $release_name (namespace: $release_namespace)"
-            $SCRIPT_DIR/helm uninstall "$release_name" --namespace "$release_namespace" || log_warning "Failed to remove $release_name"
+            $HELM_BIN uninstall "$release_name" --namespace "$release_namespace" || log_warning "Failed to remove $release_name"
         done
         log_success "Redis Helm releases removed"
     else
@@ -216,7 +230,7 @@ remove_helm_releases() {
     fi
     
     log_step "2/4" "Checking for operator Helm releases"
-    operator_releases=$($SCRIPT_DIR/helm list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis-operator|ot-)" || echo "")
+    operator_releases=$($HELM_BIN list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis-operator|ot-)" || echo "")
     
     if [ -n "$operator_releases" ]; then
         echo "$operator_releases" | while read -r release_line; do
@@ -224,7 +238,7 @@ remove_helm_releases() {
             release_namespace=$(echo "$release_line" | awk '{print $2}')
             
             log_step "•" "Removing operator release: $release_name (namespace: $release_namespace)"
-            $SCRIPT_DIR/helm uninstall "$release_name" --namespace "$release_namespace" || log_warning "Failed to remove $release_name"
+            $HELM_BIN uninstall "$release_name" --namespace "$release_namespace" || log_warning "Failed to remove $release_name"
         done
         log_success "Operator Helm releases removed"
     else
@@ -236,7 +250,7 @@ remove_helm_releases() {
     log_success "Helm cleanup wait completed"
     
     log_step "4/4" "Removing Helm repository"
-    $SCRIPT_DIR/helm repo remove ot-helm 2>/dev/null || log_warning "ot-helm repository not found or already removed"
+    $HELM_BIN repo remove ot-helm 2>/dev/null || log_warning "ot-helm repository not found or already removed"
     log_success "Helm repository cleanup completed"
 }
 
@@ -249,30 +263,8 @@ remove_redis_namespace() {
         return 0
     fi
     
-    log_step "1/6" "Removing Redis applications"
-    # Remove specific deployments first to ensure graceful shutdown
-    kubectl delete deployment redisinsight -n "$REDIS_NAMESPACE" --ignore-not-found=true --timeout=60s || log_warning "RedisInsight deployment removal timed out"
-    kubectl delete deployment redis-client -n "$REDIS_NAMESPACE" --ignore-not-found=true --timeout=60s || log_warning "Redis client deployment removal timed out"
-    log_success "Redis applications removed"
-    
-    log_step "2/6" "Removing Redis services"
-    kubectl delete svc --all -n "$REDIS_NAMESPACE" --timeout=30s || log_warning "Some services removal timed out"
-    log_success "Redis services removed"
-    
-    log_step "3/6" "Removing Redis ingress"
-    kubectl delete ingress --all -n "$REDIS_NAMESPACE" --timeout=30s || log_warning "Ingress removal timed out"
-    log_success "Redis ingress removed"
-    
-    log_step "4/6" "Removing Redis StatefulSets"
-    kubectl delete statefulset --all -n "$REDIS_NAMESPACE" --timeout=120s || log_warning "StatefulSet removal timed out"
-    log_success "Redis StatefulSets removed"
-    
-    log_step "5/6" "Removing remaining pods"
-    kubectl delete pods --all -n "$REDIS_NAMESPACE" --timeout=60s --grace-period=10 || log_warning "Pod removal timed out"
-    log_success "Remaining pods removed"
-    
-    log_step "6/6" "Removing Redis namespace"
-    kubectl delete namespace "$REDIS_NAMESPACE" --timeout=120s
+    log_step "1/1" "Deleting Redis namespace"
+    kubectl delete namespace "$REDIS_NAMESPACE" --timeout=180s
     log_success "Redis namespace removed"
 }
 
@@ -285,16 +277,8 @@ remove_operator_namespace() {
         return 0
     fi
     
-    log_step "1/3" "Removing operator deployment"
-    kubectl delete deployment --all -n "$OPERATOR_NAMESPACE" --timeout=60s || log_warning "Operator deployment removal timed out"
-    log_success "Operator deployment removed"
-    
-    log_step "2/3" "Removing operator pods"
-    kubectl delete pods --all -n "$OPERATOR_NAMESPACE" --timeout=60s --grace-period=10 || log_warning "Operator pod removal timed out"
-    log_success "Operator pods removed"
-    
-    log_step "3/3" "Removing operator namespace"
-    kubectl delete namespace "$OPERATOR_NAMESPACE" --timeout=120s
+    log_step "1/1" "Deleting operator namespace"
+    kubectl delete namespace "$OPERATOR_NAMESPACE" --timeout=180s
     log_success "Operator namespace removed"
 }
 
@@ -386,7 +370,7 @@ cleanup_crds() {
     log_header "CLEANING UP CUSTOM RESOURCE DEFINITIONS"
     
     log_step "1/2" "Checking for Redis CRDs"
-    redis_crds=$(kubectl get crd --no-headers 2>/dev/null | grep -E "(redis|cnpg|opstreelabs)" | awk '{print $1}' || echo "")
+    redis_crds=$(kubectl get crd --no-headers 2>/dev/null | grep -E "(redis|opstreelabs)" | awk '{print $1}' || echo "")
     
     if [ -n "$redis_crds" ]; then
         log_warning "Found Redis-related CRDs:"

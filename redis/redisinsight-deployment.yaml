@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: redisinsight
-        image: redis/redisinsight:latest
+        image: redis/redisinsight:2
         ports:
         - containerPort: 5540
           name: http
@@ -28,6 +28,11 @@ spec:
           limits:
             memory: "512Mi"
             cpu: "400m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop: ["ALL"]
         livenessProbe:
           httpGet:
             path: /healthcheck
@@ -74,7 +79,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-    nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: nginx
   rules:
