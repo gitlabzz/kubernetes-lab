@@ -27,6 +27,48 @@ cd /private/tmp/kubernetes-lab/redis
 
 ---
 
+## 📦 Pinned Chart Versions
+
+For repeatable installs, the script pins Helm chart versions by default:
+
+- `redis-operator`: `0.22.1`
+- `redis` (standalone): `0.16.6`
+- `redis-cluster`: `0.17.1`
+
+You can override these via environment variables when running the installer:
+
+```bash
+REDIS_OPERATOR_CHART_VERSION=0.22.1 \
+REDIS_STANDALONE_CHART_VERSION=0.16.6 \
+REDIS_CLUSTER_CHART_VERSION=0.17.1 \
+./redis-automated-install.sh
+```
+
+The script will also use system `helm` if available, or fallback to the bundled `./helm` binary.
+
+---
+
+## 🔒 Pinned Redis Images (Data Plane)
+
+The installer can pin the Redis container images used by the operator-managed resources. Defaults:
+
+- `REDIS_IMAGE_REPOSITORY=quay.io/opstree/redis`
+- `REDIS_IMAGE_TAG=7.0.15`
+
+Override when running the installer:
+
+```bash
+REDIS_IMAGE_REPOSITORY=quay.io/opstree/redis \
+REDIS_IMAGE_TAG=7.0.15 \
+./redis-automated-install.sh
+```
+
+Notes:
+- Pinning is applied by patching the `Redis` and `RedisCluster` CRs (best-effort). If the CR structure differs, the script logs a warning and continues.
+- `redis-client` is pinned to `redis:7-alpine` and RedisInsight is pinned to `redis/redisinsight:2.70.1` in the manifests.
+
+---
+
 ## 📋 **Prerequisites**
 
 The script automatically checks for:

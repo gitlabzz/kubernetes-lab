@@ -16,6 +16,16 @@ OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-ot-operators}"
 KUBECONFIG_PATH_DEFAULT="/private/tmp/kubernetes-lab/admin.conf"
 export KUBECONFIG="${KUBECONFIG:-$KUBECONFIG_PATH_DEFAULT}"
 
+# Pin chart versions for reproducibility (override via env if needed)
+REDIS_OPERATOR_CHART_VERSION="${REDIS_OPERATOR_CHART_VERSION:-0.22.1}"
+REDIS_STANDALONE_CHART_VERSION="${REDIS_STANDALONE_CHART_VERSION:-0.16.6}"
+REDIS_CLUSTER_CHART_VERSION="${REDIS_CLUSTER_CHART_VERSION:-0.17.1}"
+
+# Pin container images for Redis data-plane (override via env if needed)
+# These apply to the Redis CRs managed by the operator.
+REDIS_IMAGE_REPOSITORY="${REDIS_IMAGE_REPOSITORY:-quay.io/opstree/redis}"
+REDIS_IMAGE_TAG="${REDIS_IMAGE_TAG:-7.0.15}"
+
 # Resolve Helm binary: prefer system helm, fallback to repo-local helm
 HELM_BIN="${HELM_BIN:-$(command -v helm || true)}"
 if [ -z "$HELM_BIN" ]; then
@@ -137,6 +147,7 @@ install_redis_operator() {
     # Using the exact command we tested successfully
     $HELM_BIN upgrade redis-operator ot-helm/redis-operator \
         --install --create-namespace --namespace "$OPERATOR_NAMESPACE" \
+        --version "$REDIS_OPERATOR_CHART_VERSION" \
         --wait --timeout 10m --atomic
     log_success "Redis Operator installed successfully"
     
@@ -157,6 +168,7 @@ deploy_redis_instances() {
     # Using the exact command we tested successfully
     $HELM_BIN upgrade redis-standalone ot-helm/redis \
         --install --namespace "$REDIS_NAMESPACE" \
+        --version "$REDIS_STANDALONE_CHART_VERSION" \
         --set storageSpec.volumeClaimTemplate.spec.storageClassName=longhorn \
         --set storageSpec.volumeClaimTemplate.spec.resources.requests.storage=5Gi \
         --set redisExporter.enabled=true \
@@ -168,6 +180,7 @@ deploy_redis_instances() {
     # Using the exact command we tested successfully
     $HELM_BIN upgrade redis-cluster ot-helm/redis-cluster \
         --install --namespace "$REDIS_NAMESPACE" \
+        --version "$REDIS_CLUSTER_CHART_VERSION" \
         --set redisCluster.clusterSize=3 \
         --set redisCluster.storageSpec.volumeClaimTemplate.spec.storageClassName=longhorn \
         --set redisCluster.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=3Gi \
@@ -205,6 +218,44 @@ deploy_redisinsight() {
     log_step "2/2" "Waiting for RedisInsight to be ready"
     kubectl wait --for=condition=available --timeout=180s deployment/redisinsight -n "$REDIS_NAMESPACE"
     log_success "RedisInsight is ready"
+}
+
+# Pin the Redis images on the operator-managed CRs (best-effort)
+pin_redis_images() {
+    log_header "PINNING REDIS IMAGE VERSIONS"
+    
+    # Standalone CR
+    if kubectl get redis redis-standalone -n "$REDIS_NAMESPACE" &>/dev/null; then
+        log_step "1/3" "Pinning standalone image to $REDIS_IMAGE_REPOSITORY:$REDIS_IMAGE_TAG"
+        if kubectl patch redis redis-standalone -n "$REDIS_NAMESPACE" \
+            --type merge \
+            -p "{\"spec\":{\"kubernetesConfig\":{\"image\":\"$REDIS_IMAGE_REPOSITORY:$REDIS_IMAGE_TAG\"}}}"; then
+            log_success "Standalone image pinned"
+        else
+            log_warning "Failed to pin standalone image (structure may differ)"
+        fi
+    else
+        log_warning "Standalone Redis CR not found; skipping image pin"
+    fi
+
+    # Cluster CR (leader + follower)
+    if kubectl get rediscluster redis-cluster -n "$REDIS_NAMESPACE" &>/dev/null; then
+        log_step "2/3" "Pinning cluster images to $REDIS_IMAGE_REPOSITORY:$REDIS_IMAGE_TAG"
+        if kubectl patch rediscluster redis-cluster -n "$REDIS_NAMESPACE" \
+            --type merge \
+            -p "{\"spec\":{\"redisLeader\":{\"kubernetesConfig\":{\"image\":\"$REDIS_IMAGE_REPOSITORY:$REDIS_IMAGE_TAG\"}},\"redisFollower\":{\"kubernetesConfig\":{\"image\":\"$REDIS_IMAGE_REPOSITORY:$REDIS_IMAGE_TAG\"}}}}"; then
+            log_success "Cluster images pinned"
+        else
+            log_warning "Failed to pin cluster images (structure may differ)"
+        fi
+    else
+        log_warning "RedisCluster CR not found; skipping cluster image pin"
+    fi
+
+    log_step "3/3" "Verifying pods pick up pinned images (rolling update if needed)"
+    kubectl rollout status statefulset/redis-standalone -n "$REDIS_NAMESPACE" --timeout=120s || true
+    kubectl rollout status statefulset/redis-cluster-leader -n "$REDIS_NAMESPACE" --timeout=120s || true
+    kubectl rollout status statefulset/redis-cluster-follower -n "$REDIS_NAMESPACE" --timeout=120s || true
 }
 
 # Test Redis connectivity
@@ -496,6 +547,7 @@ main() {
     deploy_redis_instances  
     deploy_redis_client
     deploy_redisinsight
+    pin_redis_images
     test_redis_connectivity
     create_sample_data
     run_performance_tests

@@ -25,12 +25,12 @@ echo -e "${GREEN}✅ Script file found${NC}"
 
 # Validated commands that we tested in this session
 TESTED_COMMANDS=(
-    "helm repo add ot-helm https://ot-container-kit.github.io/helm-charts/"
-    "helm repo update"
-    "helm upgrade redis-operator ot-helm/redis-operator"
+    "repo add ot-helm https://ot-container-kit.github.io/helm-charts/"
+    "repo update"
+    "upgrade redis-operator ot-helm/redis-operator"
     "namespace.*REDIS_NAMESPACE"
-    "helm upgrade redis-standalone ot-helm/redis"
-    "helm upgrade redis-cluster ot-helm/redis-cluster" 
+    "upgrade redis-standalone ot-helm/redis"
+    "upgrade redis-cluster ot-helm/redis-cluster" 
     "kubectl apply -f.*redis-client.yaml"
     "kubectl apply -f.*redisinsight-deployment.yaml"
     "kubectl wait --for=condition=available.*deployment/redis-client"

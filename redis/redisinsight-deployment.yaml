@@ -15,9 +15,15 @@ spec:
       labels:
         app: redisinsight
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: redisinsight
-        image: redis/redisinsight:2
+        image: redis/redisinsight:2.70.1
         ports:
         - containerPort: 5540
           name: http
@@ -48,8 +54,12 @@ spec:
         volumeMounts:
         - name: tmp-volume
           mountPath: /tmp
+        - name: data-volume
+          mountPath: /data
       volumes:
       - name: tmp-volume
+        emptyDir: {}
+      - name: data-volume
         emptyDir: {}
 ---
 apiVersion: v1
@@ -79,8 +89,13 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    cert-manager.io/cluster-issuer: selfsigned-issuer
 spec:
   ingressClassName: nginx
+  tls:
+  - hosts:
+    - redis.devsecops.net.au
+    secretName: redisinsight-tls
   rules:
   - host: redis.devsecops.net.au
     http:
