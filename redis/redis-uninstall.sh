@@ -61,6 +61,79 @@ log_step() {
     echo -e "${CYAN}[$1]${NC} $2"
 }
 
+# Clean up stuck resources with finalizers
+cleanup_stuck_resources() {
+    local namespace="$1"
+    log_info "🔧 Cleaning up stuck resources with finalizers in namespace: $namespace"
+    
+    # Check if namespace exists
+    if ! kubectl get namespace "$namespace" &>/dev/null; then
+        log_info "Namespace $namespace does not exist, skipping finalizer cleanup"
+        return 0
+    fi
+    
+    # Discover and clean stuck resources
+    local stuck_resources
+    stuck_resources=$(kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null | \
+        xargs -n 1 kubectl get --show-kind --ignore-not-found -n "$namespace" 2>/dev/null | \
+        grep -E "(redis|rediscluster|redisreplication|redissentinel)" | \
+        awk '{print $1}' || echo "")
+    
+    if [ -n "$stuck_resources" ]; then
+        log_info "Found stuck resources, removing finalizers..."
+        echo "$stuck_resources" | while IFS= read -r resource; do
+            if [ -n "$resource" ]; then
+                log_step "•" "Removing finalizers from: $resource"
+                kubectl patch "$resource" -n "$namespace" -p '{"metadata":{"finalizers":null}}' --type=merge 2>/dev/null || true
+            fi
+        done
+        log_success "Finalizer cleanup completed"
+        sleep 5  # Give Kubernetes time to process the changes
+    else
+        log_info "No stuck resources found with finalizers"
+    fi
+}
+
+# Force namespace deletion with finalizer cleanup
+force_delete_namespace_with_finalizers() {
+    local namespace="$1"
+    log_info "🗑️ Force deleting namespace with finalizer cleanup: $namespace"
+    
+    # First try regular deletion
+    kubectl delete namespace "$namespace" --timeout=30s 2>/dev/null || true
+    
+    # Check if namespace still exists
+    if kubectl get namespace "$namespace" &>/dev/null; then
+        log_warning "Namespace $namespace stuck in terminating state, applying finalizer cleanup..."
+        
+        # Clean up stuck resources
+        cleanup_stuck_resources "$namespace"
+        
+        # Patch namespace to remove finalizers
+        log_step "•" "Removing finalizers from namespace: $namespace"
+        kubectl patch namespace "$namespace" -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
+        
+        # Wait for deletion to complete
+        local timeout=60
+        local elapsed=0
+        while kubectl get namespace "$namespace" &>/dev/null && [ $elapsed -lt $timeout ]; do
+            sleep 2
+            elapsed=$((elapsed + 2))
+        done
+        
+        if kubectl get namespace "$namespace" &>/dev/null; then
+            log_warning "Namespace $namespace still exists after finalizer cleanup"
+            return 1
+        else
+            log_success "Namespace $namespace successfully deleted after finalizer cleanup"
+            return 0
+        fi
+    else
+        log_success "Namespace $namespace deleted successfully"
+        return 0
+    fi
+}
+
 # Check prerequisites
 check_prerequisites() {
     log_header "CHECKING PREREQUISITES"
@@ -263,9 +336,13 @@ remove_redis_namespace() {
         return 0
     fi
     
-    log_step "1/1" "Deleting Redis namespace"
-    kubectl delete namespace "$REDIS_NAMESPACE" --timeout=180s
-    log_success "Redis namespace removed"
+    log_step "1/1" "Deleting Redis namespace with finalizer cleanup"
+    if force_delete_namespace_with_finalizers "$REDIS_NAMESPACE"; then
+        log_success "Redis namespace removed"
+    else
+        log_error "Failed to remove Redis namespace"
+        return 1
+    fi
 }
 
 # Remove operator namespace and resources  
@@ -277,9 +354,13 @@ remove_operator_namespace() {
         return 0
     fi
     
-    log_step "1/1" "Deleting operator namespace"
-    kubectl delete namespace "$OPERATOR_NAMESPACE" --timeout=180s
-    log_success "Operator namespace removed"
+    log_step "1/1" "Deleting operator namespace with finalizer cleanup"
+    if force_delete_namespace_with_finalizers "$OPERATOR_NAMESPACE"; then
+        log_success "Operator namespace removed"
+    else
+        log_error "Failed to remove operator namespace"
+        return 1
+    fi
 }
 
 # Clean up persistent volumes
