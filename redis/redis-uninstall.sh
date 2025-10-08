@@ -93,10 +93,10 @@ show_current_resources() {
     
     if kubectl get namespace "$REDIS_NAMESPACE" &> /dev/null; then
         redis_ns_exists=true
-        redis_pods=$(kubectl get pods -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l || echo "0")
-        redis_svcs=$(kubectl get svc -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l || echo "0")
-        redis_pvcs=$(kubectl get pvc -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l || echo "0")
-        redis_ingress=$(kubectl get ingress -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l || echo "0")
+        redis_pods=$(kubectl get pods -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+        redis_svcs=$(kubectl get svc -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+        redis_pvcs=$(kubectl get pvc -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+        redis_ingress=$(kubectl get ingress -n "$REDIS_NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
         
         echo "   🔵 Redis Namespace ($REDIS_NAMESPACE):"
         echo "      • Pods: $redis_pods"
@@ -118,7 +118,7 @@ show_current_resources() {
     echo ""
     if kubectl get namespace "$OPERATOR_NAMESPACE" &> /dev/null; then
         operator_ns_exists=true
-        operator_pods=$(kubectl get pods -n "$OPERATOR_NAMESPACE" --no-headers 2>/dev/null | wc -l || echo "0")
+        operator_pods=$(kubectl get pods -n "$OPERATOR_NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
         
         echo "   🟡 Operator Namespace ($OPERATOR_NAMESPACE):"
         echo "      • Pods: $operator_pods"
@@ -137,14 +137,14 @@ show_current_resources() {
     log_info "🔍 Checking for Redis resources in other namespaces..."
     
     # Check for ServiceMonitors
-    redis_sm=$(kubectl get servicemonitor --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l || echo "0")
+    redis_sm=$(kubectl get servicemonitor --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l | tr -d ' \n' || echo "0")
     if [ "$redis_sm" -gt "0" ]; then
         echo "   • ServiceMonitors with 'redis': $redis_sm"
         kubectl get servicemonitor --all-namespaces --no-headers 2>/dev/null | grep -i redis | awk '{print "      • " $2 " in " $1}' || true
     fi
     
     # Check for PrometheusRules
-    redis_pr=$(kubectl get prometheusrule --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l || echo "0")
+    redis_pr=$(kubectl get prometheusrule --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l | tr -d ' \n' || echo "0")
     if [ "$redis_pr" -gt "0" ]; then
         echo "   • PrometheusRules with 'redis': $redis_pr"
         kubectl get prometheusrule --all-namespaces --no-headers 2>/dev/null | grep -i redis | awk '{print "      • " $2 " in " $1}' || true
@@ -154,7 +154,7 @@ show_current_resources() {
     echo ""
     log_info "🔍 Checking Helm releases..."
     if [ -n "$HELM_BIN" ]; then
-        redis_releases=$($HELM_BIN list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | wc -l || echo "0")
+        redis_releases=$($HELM_BIN list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | wc -l | tr -d ' \n' || echo "0")
         if [ "$redis_releases" -gt "0" ]; then
             echo "   • Redis-related Helm releases: $redis_releases"
             $HELM_BIN list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | awk '{print "      • " $1 " in " $2}' || true
@@ -422,7 +422,7 @@ final_verification() {
     fi
     
     log_step "3/8" "Checking Redis pods"
-    redis_pods=$(kubectl get pods --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l || echo "0")
+    redis_pods=$(kubectl get pods --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l | tr -d ' \n' || echo "0")
     if [ "$redis_pods" -eq "0" ]; then
         log_success "✓ No Redis pods found"
         ((cleanup_score++))
@@ -431,7 +431,7 @@ final_verification() {
     fi
     
     log_step "4/8" "Checking Redis services"
-    redis_svcs=$(kubectl get svc --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l || echo "0")
+    redis_svcs=$(kubectl get svc --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l | tr -d ' \n' || echo "0")
     if [ "$redis_svcs" -eq "0" ]; then
         log_success "✓ No Redis services found"
         ((cleanup_score++))
@@ -440,7 +440,7 @@ final_verification() {
     fi
     
     log_step "5/8" "Checking Redis PVCs"
-    redis_pvcs=$(kubectl get pvc --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l || echo "0")
+    redis_pvcs=$(kubectl get pvc --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l | tr -d ' \n' || echo "0")
     if [ "$redis_pvcs" -eq "0" ]; then
         log_success "✓ No Redis PVCs found"
         ((cleanup_score++))
@@ -450,7 +450,7 @@ final_verification() {
     
     log_step "6/8" "Checking Helm releases"
     if [ -f "$SCRIPT_DIR/helm" ]; then
-        redis_releases=$($SCRIPT_DIR/helm list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | wc -l || echo "0")
+        redis_releases=$($SCRIPT_DIR/helm list --all-namespaces --no-headers 2>/dev/null | grep -E "(redis|ot-)" | wc -l | tr -d ' \n' || echo "0")
         if [ "$redis_releases" -eq "0" ]; then
             log_success "✓ No Redis Helm releases found"
             ((cleanup_score++))
@@ -462,7 +462,7 @@ final_verification() {
     fi
     
     log_step "7/8" "Checking ServiceMonitors"
-    redis_sm=$(kubectl get servicemonitor --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l || echo "0")
+    redis_sm=$(kubectl get servicemonitor --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l | tr -d ' \n' || echo "0")
     if [ "$redis_sm" -eq "0" ]; then
         log_success "✓ No Redis ServiceMonitors found"
         ((cleanup_score++))
@@ -471,7 +471,7 @@ final_verification() {
     fi
     
     log_step "8/8" "Checking PrometheusRules"  
-    redis_pr=$(kubectl get prometheusrule --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l || echo "0")
+    redis_pr=$(kubectl get prometheusrule --all-namespaces --no-headers 2>/dev/null | grep -i redis | wc -l | tr -d ' \n' || echo "0")
     if [ "$redis_pr" -eq "0" ]; then
         log_success "✓ No Redis PrometheusRules found"
         ((cleanup_score++))
