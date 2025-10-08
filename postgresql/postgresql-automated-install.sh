@@ -17,6 +17,8 @@ export KUBECONFIG="${KUBECONFIG:-$KUBECONFIG_PATH_DEFAULT}"
 
 # Chart pins
 CNPG_CHART_VERSION="${CNPG_CHART_VERSION:-0.26.0}"
+CNPG_OPERATOR_IMAGE_REPOSITORY="${CNPG_OPERATOR_IMAGE_REPOSITORY:-ghcr.io/cloudnative-pg/cloudnative-pg}"
+CNPG_OPERATOR_IMAGE_TAG="${CNPG_OPERATOR_IMAGE_TAG:-1.27.0}"
 
 # Postgres image pin (CNPG imageName)
 POSTGRES_IMAGE_REPOSITORY="${POSTGRES_IMAGE_REPOSITORY:-ghcr.io/cloudnative-pg/postgresql}"
@@ -107,6 +109,8 @@ install_cnpg_operator(){
   $HELM_BIN upgrade "$CNPG_RELEASE_NAME" cloudnative-pg/cloudnative-pg \
     --install --create-namespace --namespace "$CNPG_NAMESPACE" \
     --version "$CNPG_CHART_VERSION" \
+    --set image.repository="$CNPG_OPERATOR_IMAGE_REPOSITORY" \
+    --set image.tag="$CNPG_OPERATOR_IMAGE_TAG" \
     --wait --timeout "$HELM_TIMEOUT" --atomic
   log_success "CNPG operator installed"
 
@@ -315,6 +319,9 @@ display_info(){
   log_info "Web UIs:"
   echo " - Adminer: http://postgres.devsecops.net.au (TLS available)"
   echo " - pgAdmin: http://pgadmin.devsecops.net.au (TLS available)"
+  echo ""
+  log_info "Grafana Dashboard Import Helper:"
+  echo " - Run: $SCRIPT_DIR/import-grafana-dashboard.sh"
 }
 
 main(){

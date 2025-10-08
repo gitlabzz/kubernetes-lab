@@ -59,11 +59,14 @@ Full cycle test (uninstall → install → validate):
 ## Pinned Versions
 
 - Chart: `cloudnative-pg/cloudnative-pg` → `CNPG_CHART_VERSION=0.26.0`
+- Operator image: `CNPG_OPERATOR_IMAGE_REPOSITORY=ghcr.io/cloudnative-pg/cloudnative-pg`, `CNPG_OPERATOR_IMAGE_TAG=1.27.0`
 - Postgres image: `POSTGRES_IMAGE_REPOSITORY=ghcr.io/cloudnative-pg/postgresql`, `POSTGRES_IMAGE_TAG=17.5`
 
 Override when running:
 ```bash
 CNPG_CHART_VERSION=0.26.0 \
+CNPG_OPERATOR_IMAGE_REPOSITORY=ghcr.io/cloudnative-pg/cloudnative-pg \
+CNPG_OPERATOR_IMAGE_TAG=1.27.0 \
 POSTGRES_IMAGE_REPOSITORY=ghcr.io/cloudnative-pg/postgresql \
 POSTGRES_IMAGE_TAG=17.5 \
 ./postgresql-automated-install.sh
@@ -87,6 +90,9 @@ kubectl exec deployment/postgres-client -n postgres -- psql -c "SELECT version()
 kubectl exec deployment/postgres-client -n postgres -- /scripts/create-test-data.sh
 kubectl exec deployment/postgres-client -n postgres -- /scripts/insert-test-data.sh
 kubectl exec deployment/postgres-client -n postgres -- /scripts/query-test-data.sh
+
+# Import Grafana dashboard (kube-prometheus-stack)
+./import-grafana-dashboard.sh
 ```
 
 ---
